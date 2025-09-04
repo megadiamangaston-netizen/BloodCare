@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import React, { useState } from 'react';
 import { motion } from 'framer-motion';
 import { CheckCircle, XCircle, AlertCircle, User, Weight, Calendar, Pill, Plane, Heart } from 'lucide-react';
 import Button from '@/components/ui/Button';
@@ -202,6 +202,7 @@ export default function EligibilityTestComponent({ onComplete, onCancel }: Eligi
             <span>{Math.round(((currentStep + 1) / questions.length) * 100)}%</span>
           </div>
           <div className="w-full bg-gray-200 rounded-full h-2">
+            {/* @ts-ignore */}
             <motion.div
               className="bg-gradient-to-r from-red-500 to-red-600 h-2 rounded-full"
               initial={{ width: 0 }}
