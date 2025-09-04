@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { motion } from 'framer-motion';
-import { CheckCircle, XCircle, AlertCircle, User, Weight, Calendar, Pill, Plane } from 'lucide-react';
+import { CheckCircle, XCircle, AlertCircle, User, Weight, Calendar, Pill, Plane, Heart } from 'lucide-react';
 import Button from '@/components/ui/Button';
 import Input from '@/components/ui/Input';
 import { EligibilityTest } from '@/types';
@@ -162,7 +162,7 @@ export default function EligibilityTestComponent({ onComplete, onCancel }: Eligi
     const value = testData[question.field as keyof typeof testData];
     
     if (question.type === 'number') {
-      return value > 0;
+      return (value as number) > 0;
     }
     if (question.type === 'date') {
       return true; // Date peut être vide pour "jamais donné"
