@@ -20,7 +20,7 @@ import {
   Facebook,
   MessageCircle
 } from 'lucide-react';
-import { collection, getDocs, addDoc, query, where, deleteDoc, doc, orderBy, updateDoc } from 'firebase/firestore';
+import { collection, getDocs, addDoc, query, where, deleteDoc, doc, orderBy, updateDoc, setDoc } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { useAuth } from '@/hooks/useAuth';
 import ProtectedRoute from '@/components/auth/ProtectedRoute';
@@ -44,6 +44,7 @@ interface BloodBag {
   expiryDate: Date;
   hospitalId: string;
   hospitalName: string;
+  ville: string;
   status: 'available' | 'used' | 'expired';
   serialNumber: string;
   createdAt: Date;
@@ -78,7 +79,8 @@ export default function AdminDashboard() {
     bloodType: 'O+' as BloodType,
     volume: 450,
     collectionDate: new Date().toISOString().split('T')[0],
-    expiryDate: new Date(Date.now() + 42 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
+    expiryDate: new Date(Date.now() + 42 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+    ville: ''
   });
 
   const [campaignForm, setCampaignForm] = useState({
@@ -101,7 +103,8 @@ export default function AdminDashboard() {
     location: {
       address: '',
       room: '',
-      floor: ''
+      floor: '',
+      coordinates: null as { lat: number; lng: number } | null
     }
   });
 
@@ -111,28 +114,74 @@ export default function AdminDashboard() {
       fetchCampaigns();
       fetchDonations();
       fetchAppointments();
+      fetchAdminProfile();
     }
   }, [user]);
 
+  const fetchAdminProfile = async () => {
+    try {
+      console.log('🔄 Chargement du profil admin pour userId:', user?.id);
+      const profileDoc = doc(db, 'adminProfiles', user?.id || '');
+      const profileSnapshot = await getDocs(query(collection(db, 'adminProfiles'), where('userId', '==', user?.id)));
+      
+      if (!profileSnapshot.empty) {
+        const profileData = profileSnapshot.docs[0].data();
+        console.log('📋 Profil trouvé:', profileData);
+        setAdminProfile({
+          name: profileData.name || user?.displayName || '',
+          phone: profileData.phone || '',
+          address: profileData.address || ''
+        });
+      } else {
+        console.log('📋 Aucun profil trouvé, utilisation des données par défaut');
+        setAdminProfile({
+          name: user?.displayName || '',
+          phone: '',
+          address: ''
+        });
+      }
+    } catch (error) {
+      console.error('❌ Erreur lors du chargement du profil:', error);
+    }
+  };
+
   const fetchAppointments = async () => {
     try {
+      console.log('🔄 Chargement des rendez-vous pour hospitalId:', user?.id);
+      
+      // Requête simplifiée sans orderBy pour éviter les problèmes d'index
       const q = query(
         collection(db, 'appointments'), 
-        where('hospitalId', '==', user?.id),
-        orderBy('appointmentDate', 'desc')
+        where('hospitalId', '==', user?.id)
       );
+      
       const querySnapshot = await getDocs(q);
-      const appointmentsList = querySnapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data(),
-        appointmentDate: doc.data().appointmentDate.toDate(),
-        createdAt: doc.data().createdAt.toDate(),
-      })) as Appointment[];
+      console.log('📋 Nombre de rendez-vous trouvés:', querySnapshot.docs.length);
+      
+      const appointmentsList = querySnapshot.docs.map(doc => {
+        const data = doc.data();
+        console.log('📅 Données rendez-vous:', data);
+        
+        return {
+          id: doc.id,
+          ...data,
+          appointmentDate: data.appointmentDate.toDate(),
+          createdAt: data.createdAt.toDate(),
+        };
+      }) as Appointment[];
+      
+      // Tri côté client par date
+      appointmentsList.sort((a, b) => b.appointmentDate.getTime() - a.appointmentDate.getTime());
       
       setAppointments(appointmentsList);
+      console.log('✅ Rendez-vous chargés avec succès');
     } catch (error) {
-      console.error('Erreur lors du chargement des rendez-vous:', error);
-      toast.error('Impossible de charger les rendez-vous');
+      console.error('❌ Erreur détaillée lors du chargement des rendez-vous:', error);
+      if (error instanceof Error) {
+        console.error('Message d\'erreur:', error.message);
+        console.error('Code d\'erreur:', (error as any).code);
+      }
+      toast.error(`Erreur de chargement: ${error instanceof Error ? error.message : 'Erreur inconnue'}`);
     }
   };
 
@@ -210,7 +259,19 @@ export default function AdminDashboard() {
       await fetchDonations();
       await fetchAppointments();
       
-      // Fermer la modal
+      // Réinitialiser le formulaire et fermer la modal
+      setAppointmentForm({
+        appointmentDate: new Date().toISOString().split('T')[0],
+        appointmentTime: '09:00',
+        duration: 30,
+        notes: '',
+        location: {
+          address: '',
+          room: '',
+          floor: '',
+          coordinates: null
+        }
+      });
       setShowScheduleAppointment(false);
       setSelectedDonation(null);
       
@@ -313,6 +374,7 @@ export default function AdminDashboard() {
         expiryDate: new Date(stockForm.expiryDate),
         hospitalId: user?.id,
         hospitalName: adminProfile.name || user?.displayName || 'Hôpital',
+        ville: stockForm.ville,
         status: 'available',
         donorId: null,
         serialNumber: `${stockForm.bloodType}-${Date.now()}`,
@@ -329,7 +391,8 @@ export default function AdminDashboard() {
         bloodType: 'O+' as BloodType,
         volume: 450,
         collectionDate: new Date().toISOString().split('T')[0],
-        expiryDate: ''
+        expiryDate: '',
+        ville: ''
       });
       setShowAddStock(false);
       fetchBloodStock();
@@ -748,7 +811,7 @@ export default function AdminDashboard() {
                                 {bag.serialNumber}
                               </div>
                               <div className="text-sm text-gray-500">
-                                {bag.volume}ml • Expire le {bag.expiryDate.toLocaleDateString()}
+                                {bag.volume}ml • {bag.ville} • Expire le {bag.expiryDate.toLocaleDateString()}
                               </div>
                             </div>
                           </div>
@@ -1523,6 +1586,15 @@ export default function AdminDashboard() {
                   required
                 />
                 
+                <Input
+                  type="text"
+                  label="Ville de collecte"
+                  value={stockForm.ville}
+                  onChange={(e) => setStockForm({ ...stockForm, ville: e.target.value })}
+                  placeholder="Ex: Yaoundé, Douala..."
+                  required
+                />
+                
                 <div className="flex space-x-3 pt-4">
                   <Button
                     type="button"
@@ -1560,21 +1632,30 @@ export default function AdminDashboard() {
               <form onSubmit={async (e) => {
                 e.preventDefault();
                 try {
-                  // Sauvegarder le profil dans Firestore
-                  await addDoc(collection(db, 'adminProfiles'), {
+                  console.log('💾 Sauvegarde du profil admin:', adminProfile);
+                  
+                  // Utiliser l'ID de l'utilisateur comme ID du document pour éviter les doublons
+                  const profileDocRef = doc(db, 'adminProfiles', user?.id || '');
+                  
+                  await setDoc(profileDocRef, {
                     userId: user?.id,
                     name: adminProfile.name,
                     phone: adminProfile.phone,
                     address: adminProfile.address,
                     email: user?.email,
-                    updatedAt: new Date()
-                  });
+                    updatedAt: new Date(),
+                    createdAt: new Date() // Sera ignoré si le document existe déjà
+                  }, { merge: true }); // merge: true pour mettre à jour seulement les champs modifiés
                   
+                  console.log('✅ Profil sauvegardé avec succès');
                   toast.success('Profil mis à jour avec succès');
                   setShowProfileForm(false);
                 } catch (error) {
-                  console.error('Erreur mise à jour profil:', error);
-                  toast.error('Erreur lors de la mise à jour');
+                  console.error('❌ Erreur lors de la mise à jour du profil:', error);
+                  if (error instanceof Error) {
+                    console.error('Message d\'erreur:', error.message);
+                  }
+                  toast.error(`Erreur lors de la mise à jour: ${error instanceof Error ? error.message : 'Erreur inconnue'}`);
                 }
               }} className="space-y-4">
                 <div>
@@ -1863,15 +1944,14 @@ export default function AdminDashboard() {
                 <form
                   onSubmit={(e) => {
                     e.preventDefault();
-                    const formData = new FormData(e.currentTarget);
                     
-                    const appointmentDate = new Date(formData.get('appointmentDate') as string);
-                    const appointmentTime = formData.get('appointmentTime') as string;
-                    const duration = parseInt(formData.get('duration') as string) || 60;
-                    const address = formData.get('address') as string;
-                    const room = formData.get('room') as string;
-                    const floor = formData.get('floor') as string;
-                    const notes = formData.get('notes') as string;
+                    const appointmentDate = new Date(appointmentForm.appointmentDate);
+                    const appointmentTime = appointmentForm.appointmentTime;
+                    const duration = appointmentForm.duration;
+                    const address = appointmentForm.location.address;
+                    const room = appointmentForm.location.room;
+                    const floor = appointmentForm.location.floor;
+                    const notes = appointmentForm.notes;
 
                     scheduleAppointment({
                       donationRequestId: selectedDonation.id,
@@ -1895,7 +1975,11 @@ export default function AdminDashboard() {
                       </label>
                       <input
                         type="date"
-                        name="appointmentDate"
+                        value={appointmentForm.appointmentDate}
+                        onChange={(e) => setAppointmentForm({
+                          ...appointmentForm,
+                          appointmentDate: e.target.value
+                        })}
                         required
                         min={new Date().toISOString().split('T')[0]}
                         className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-red-500"
@@ -1908,7 +1992,11 @@ export default function AdminDashboard() {
                       </label>
                       <input
                         type="time"
-                        name="appointmentTime"
+                        value={appointmentForm.appointmentTime}
+                        onChange={(e) => setAppointmentForm({
+                          ...appointmentForm,
+                          appointmentTime: e.target.value
+                        })}
                         required
                         className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-red-500"
                       />
@@ -1920,8 +2008,11 @@ export default function AdminDashboard() {
                       ⏱️ Durée (minutes)
                     </label>
                     <select
-                      name="duration"
-                      defaultValue="60"
+                      value={appointmentForm.duration}
+                      onChange={(e) => setAppointmentForm({
+                        ...appointmentForm,
+                        duration: parseInt(e.target.value)
+                      })}
                       className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-red-500"
                     >
                       <option value="30">30 minutes</option>
@@ -1932,18 +2023,23 @@ export default function AdminDashboard() {
                     </select>
                   </div>
 
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      📍 Adresse du lieu
-                    </label>
-                    <input
-                      type="text"
-                      name="address"
-                      placeholder="Adresse complète de l'hôpital"
-                      required
-                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-red-500"
-                    />
-                  </div>
+                  <AddressInput
+                    label="📍 Adresse du lieu"
+                    placeholder="Tapez l'adresse de l'hôpital..."
+                    value={appointmentForm.location.address}
+                    onChange={(address, coordinates) => {
+                      setAppointmentForm({
+                        ...appointmentForm,
+                        location: {
+                          ...appointmentForm.location,
+                          address,
+                          coordinates: coordinates || null
+                        }
+                      });
+                    }}
+                    required
+                    className="mb-4"
+                  />
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div>
@@ -1952,7 +2048,14 @@ export default function AdminDashboard() {
                       </label>
                       <input
                         type="text"
-                        name="room"
+                        value={appointmentForm.location.room}
+                        onChange={(e) => setAppointmentForm({
+                          ...appointmentForm,
+                          location: {
+                            ...appointmentForm.location,
+                            room: e.target.value
+                          }
+                        })}
                         placeholder="Numéro de salle"
                         className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-red-500"
                       />
@@ -1964,7 +2067,14 @@ export default function AdminDashboard() {
                       </label>
                       <input
                         type="text"
-                        name="floor"
+                        value={appointmentForm.location.floor}
+                        onChange={(e) => setAppointmentForm({
+                          ...appointmentForm,
+                          location: {
+                            ...appointmentForm.location,
+                            floor: e.target.value
+                          }
+                        })}
                         placeholder="Numéro d'étage"
                         className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-red-500"
                       />
@@ -1976,7 +2086,11 @@ export default function AdminDashboard() {
                       📝 Notes (optionnel)
                     </label>
                     <textarea
-                      name="notes"
+                      value={appointmentForm.notes}
+                      onChange={(e) => setAppointmentForm({
+                        ...appointmentForm,
+                        notes: e.target.value
+                      })}
                       rows={3}
                       placeholder="Instructions spéciales, préparations nécessaires..."
                       className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-red-500"
